@@ -1,3 +1,5 @@
+; Approximate DOS Crash Count when developing this: 12 times.
+
 struc header
   next: resd 1
   attr: resw 1
@@ -13,6 +15,13 @@ struc drivereq
   .status: resw 1
   .dosq: resd 1
   .devq: resd 1
+endstruc
+
+struc initreq
+  .hdr: resb drivereq_size
+  .numunits: resb 1
+  .brkaddr: resd 1
+  .bpbaddr: resd 1
 endstruc
 
 ; Status return bits- high
@@ -41,7 +50,7 @@ istruc header
   at attr, dw 0x8000
   at strat, dw strategy
   at intr, dw interrupt
-  at name, db 'HELLO', 0, 0, 0
+  at name, db 'HELLO   '
 iend
 
 ; Driver data
@@ -60,12 +69,11 @@ interrupt:
   push bx
   push si
   push di
-  push sp
   push bp
   push ds
   push es
 
-  les di, [packet_ptr]
+  les di, cs:[packet_ptr]
   mov si, es:[di + drivereq.cmd]
   cmp si, 11
   ja .bad_cmd
@@ -80,7 +88,6 @@ interrupt:
   pop es
   pop ds
   pop bp
-  pop sp
   pop di
   pop si
   pop bx
@@ -116,7 +123,8 @@ init:
   mov dx, install_msg
   mov ah, 0x09
   int 0x21
-  mov dx, res_end
+  mov word es:[di + initreq.brkaddr], res_end
+  mov word es:[di + initreq.brkaddr + 2], cs
   jmp interrupt.exit
 
-install_msg db 'Hello World driver installd.', 0xD, 0xA, '$'
+install_msg db 'Hello World driver installed.', 0xD, 0xA, '$'
