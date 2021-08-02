@@ -17,6 +17,14 @@ struc drivereq
   .devq: resd 1
 endstruc
 
+struc wrreq
+  .hdr: resb drivereq_size
+  .desc: resb 1
+  .xferaddr: resd 1
+  .count: resw 1
+  .start: resw 1
+endstruc
+
 struc initreq
   .hdr: resb drivereq_size
   .numunits: resb 1
@@ -55,7 +63,16 @@ iend
 
 ; Driver data
 packet_ptr dd 0
-msg db 'HELLO, WORLD!!', 0xD, 0xA, 0
+msg db 'HELLO, WORLD!!', 0xD, 0xA, 26, 0 ; Use 26 so fake EOF is sent
+                                         ; for TYPE command.
+msg_end:
+msg_ptr db 0
+
+lookahead_char: db 0
+got_lookahead: db 0 ; Many MS-DOS drivers use "0" as a "buffer is empty" value,
+                    ; and null values discarded. This works fine for cooked,
+                    ; i.e. ASCII mode buffers, but might as well use an extra
+                    ; byte as an "option" type.
 
 strategy:
   mov cs:[packet_ptr], bx
@@ -101,7 +118,7 @@ interrupt:
   dw .exit  ;  1      MEDIA CHECK (Block only, NOP for character)
   dw .exit  ;  2      BUILD BPB      "    "     "    "   "
   dw .exit  ;  3      IOCTL INPUT (Only called if device has IOCTL)
-  dw .exit  ;  4      INPUT (read)
+  dw read   ;  4      INPUT (read)
   dw .exit  ;  5      NON-DESTRUCTIVE INPUT NO WAIT (Char devs only)
   dw .exit  ;  6      INPUT STATUS                    "     "    "
   dw .exit  ;  7      INPUT FLUSH                     "     "    "
@@ -114,6 +131,69 @@ interrupt:
 .exit:
   mov word es:[di + drivereq.status], STATUS_DONE
   jmp interrupt.end
+
+read:
+  push es
+  pop ds
+  mov si, di
+  les di, [si + wrreq.xferaddr]
+  mov cx, [si + wrreq.count]
+
+  call get_buf ; If buffered char exists, take it now.
+  je .nothing
+  dec cx ; One less char to grab from device
+  stosb
+.nothing:
+  mov bx, si
+  call read_msg
+.done:
+  call clear_buf ; Buffer should only be filled during non-destructive read.
+
+  mov [bx + wrreq.count], ax
+  jmp interrupt.exit
+
+; ES:DI- Buf destination (buf source implicit).
+; CX- Number of characters
+;
+; Return:
+; AX- Chars read
+;
+; CX zero, SI, DI trashed
+read_msg:
+  push ds
+  push cx ; Xfer will succeed, so save the count for AX.
+
+  push cs ; Prepare device source buffer.
+  pop ds
+  mov si, [msg_ptr]
+
+.next:
+  cmp si, msg_end ; The HELLO char device infinitely streams "HELLO WORLD!\n,^Z"
+  jb .no_wrap     ; over and over. When we get to the end of the message,
+  mov si, msg     ; wrap around and grab more chars.
+.no_wrap:
+  movsb
+  loop .next
+
+  mov [msg_ptr], si
+
+  pop ax ; Right now we just unconditionally xfer the bytes requested.
+  pop ds
+  ret
+
+; Returns:
+; ZF == 0, there was a char in buffer
+; AL: char read
+; Assumes: CS == DS
+get_buf:
+  cmp byte [got_lookahead], 0
+  mov al, [lookahead_char]
+  ret
+
+; Assumes: CS == DS
+clear_buf:
+  mov byte [got_lookahead], 0
+  ret
 
 ; Init data does not need to be kept.
 res_end:
