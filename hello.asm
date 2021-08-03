@@ -151,7 +151,7 @@ read:
 
   mov [bx + wrreq.count], ax
 
-  mov di, si ; Make sure ES:DI points at the right place to set status.
+  mov di, bx ; Make sure ES:DI points at the right place to set status.
   push ds
   pop es
   jmp interrupt.exit
