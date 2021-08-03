@@ -1,4 +1,4 @@
-; Approximate DOS Crash Count when developing this: 12 times.
+; Approximate DOS Crash Count when developing this: 28 times.
 
 struc header
   next: resd 1
@@ -66,7 +66,7 @@ packet_ptr dd 0
 msg db 'HELLO, WORLD!!', 0xD, 0xA, 26, 0 ; Use 26 so fake EOF is sent
                                          ; for TYPE command.
 msg_end:
-msg_ptr db 0
+msg_ptr dw msg
 
 lookahead_char: db 0
 got_lookahead: db 0 ; Many MS-DOS drivers use "0" as a "buffer is empty" value,
@@ -139,18 +139,24 @@ read:
   les di, [si + wrreq.xferaddr]
   mov cx, [si + wrreq.count]
 
-  call get_buf ; If buffered char exists, take it now.
-  je .nothing
-  dec cx ; One less char to grab from device
-  stosb
+  ; call get_buf ; If buffered char exists, take it now.
+  ; je .nothing
+  ; dec cx ; One less char to grab from device
+  ; stosb
 .nothing:
   mov bx, si
   call read_msg
-.done:
-  call clear_buf ; Buffer should only be filled during non-destructive read.
+;.done:
+;  call clear_buf ; Buffer should only be filled during non-destructive read.
 
   mov [bx + wrreq.count], ax
+
+  mov di, si ; Make sure ES:DI points at the right place to set status.
+  push ds
+  pop es
   jmp interrupt.exit
+
+; Helper Routines
 
 ; ES:DI- Buf destination (buf source implicit).
 ; CX- Number of characters
@@ -158,27 +164,25 @@ read:
 ; Return:
 ; AX- Chars read
 ;
-; CX zero, SI, DI trashed
+; CX zero, DX, SI, DI trashed
 read_msg:
-  push ds
-  push cx ; Xfer will succeed, so save the count for AX.
+  mov dx, ds
+  mov ax, cs
+  mov ds, ax
 
-  push cs ; Prepare device source buffer.
-  pop ds
-  mov si, [msg_ptr]
+  mov ax, cx ; Xfer will succeed, so save the count for AX.
+  mov si, [msg_ptr] ; Prepare device source buffer.
 
 .next:
-  cmp si, msg_end ; The HELLO char device infinitely streams "HELLO WORLD!\n,^Z"
+  cmp si, msg_end ; The HELLO char device infinitely streams "HELLO, WORLD!!\n,^Z"
   jb .no_wrap     ; over and over. When we get to the end of the message,
   mov si, msg     ; wrap around and grab more chars.
 .no_wrap:
   movsb
   loop .next
 
-  mov [msg_ptr], si
-
-  pop ax ; Right now we just unconditionally xfer the bytes requested.
-  pop ds
+  mov [msg_ptr], si ; Restore DS
+  mov ds, ax
   ret
 
 ; Returns:
@@ -195,7 +199,7 @@ clear_buf:
   mov byte [got_lookahead], 0
   ret
 
-; Init data does not need to be kept.
+; Init data does not need to be kept, so it goes last.
 res_end:
 init:
   push cs
