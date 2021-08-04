@@ -104,8 +104,19 @@ interrupt:
   jmp [.fntab + si]
 
 .bad_cmd:
-  mov word es:[di + drivereq.status], STATUS_DONE | UNKNOWN_COMMAND
+  mov al, UNKNOWN_COMMAND
+.err:
+  xor ah, ah
+  or ah, (STATUS_ERROR | STATUS_DONE) >> 8
+  mov es:[di + drivereq.status], ax
+  jmp interrupt.end
 
+.busy:
+  mov word es:[di + drivereq.status], STATUS_DONE | STATUS_BUSY
+  jmp interrupt.end
+
+.exit:
+  mov word es:[di + drivereq.status], STATUS_DONE
 .end:
   pop es
   pop ds
@@ -132,14 +143,6 @@ interrupt:
   dw .exit  ; 10      OUTPUT STATUS                   "     "    "
   dw .exit  ; 11      OUTPUT FLUSH                    "     "    "
   dw .exit  ; 12      IOCTL OUTPUT (Only called if device has IOCTL)
-
-.exit:
-  mov word es:[di + drivereq.status], STATUS_DONE
-  jmp interrupt.end
-
-.busy:
-  mov word es:[di + drivereq.status], STATUS_DONE | STATUS_BUSY
-  jmp interrupt.end
 
 read:
   push es
