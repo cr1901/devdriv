@@ -124,9 +124,9 @@ interrupt:
   dw .exit  ;  2      BUILD BPB      "    "     "    "   "
   dw .exit  ;  3      IOCTL INPUT (Only called if device has IOCTL)
   dw read   ;  4      INPUT (read)
-  dw .exit  ;  5      NON-DESTRUCTIVE INPUT NO WAIT (Char devs only)
-  dw .exit  ;  6      INPUT STATUS                    "     "    "
-  dw .exit  ;  7      INPUT FLUSH                     "     "    "
+  dw readnd ;  5      NON-DESTRUCTIVE INPUT NO WAIT (Char devs only)
+  dw istat  ;  6      INPUT STATUS                    "     "    "
+  dw iflush ;  7      INPUT FLUSH                     "     "    "
   dw .exit  ;  8      OUTPUT (write)
   dw .exit  ;  9      OUTPUT (Write) with verify
   dw .exit  ; 10      OUTPUT STATUS                   "     "    "
@@ -135,6 +135,10 @@ interrupt:
 
 .exit:
   mov word es:[di + drivereq.status], STATUS_DONE
+  jmp interrupt.end
+
+.busy:
+  mov word es:[di + drivereq.status], STATUS_DONE | STATUS_BUSY
   jmp interrupt.end
 
 read:
@@ -165,6 +169,45 @@ read:
 
   mov di, bx ; Make sure ES:DI points at the right place to set status.
   mov es, dx
+  jmp interrupt.exit
+
+readnd:
+  mov dx, cs
+  mov ds, dx
+  call get_buf ; Non-destructive read will not flush buffer.
+  jne .gotone
+
+  mov bx, es ; We'll need to restore ES:DI for .exit.
+  mov es, dx ; Now everything points to this segment.
+  mov dx, di
+  mov cx, 1
+  mov di, lookahead_char
+  call read_msg2 ; Read one character- this device can't be busy.
+                 ; If it could be busy, we'd check for whether a buffer had
+                 ; chars in it first, and if not, bail w/ busy code.
+  mov byte [got_lookahead], 1
+  call get_buf ; Ignore flag value, we know we just got a char.
+
+  mov di, dx
+  mov es, bx
+.gotone:
+  mov es:[di + ndreq.byteread], al
+  jmp interrupt.exit
+
+; Per DEVDRIV.TXT, you are allowed to lie to DOS and say a read will return
+; immediately when it won't. This driver cannot be busy, but might as well
+; consult our lookahead buffer to test the STATUS call...
+istat:
+  mov ax, cs
+  mov ds, ax
+  call get_buf
+  je interrupt.exit
+  jmp interrupt.busy
+
+iflush:
+  mov ax, cs
+  mov ds, ax
+  call clear_buf
   jmp interrupt.exit
 
 ; Helper Routines
