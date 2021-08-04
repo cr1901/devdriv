@@ -32,6 +32,11 @@ struc initreq
   .bpbaddr: resd 1
 endstruc
 
+struc ndreq
+  .hdr: resb drivereq_size
+  .byteread: resb 1
+endstruc
+
 ; Status return bits- high
 %define STATUS_ERROR      (1 << 15)
 %define STATUS_BUSY       (1 << 9)
@@ -139,21 +144,27 @@ read:
   les di, [si + wrreq.xferaddr]
   mov cx, [si + wrreq.count]
 
-  ; call get_buf ; If buffered char exists, take it now.
-  ; je .nothing
-  ; dec cx ; One less char to grab from device
-  ; stosb
-.nothing:
-  mov bx, si
-  call read_msg
-;.done:
-;  call clear_buf ; Buffer should only be filled during non-destructive read.
+  mov dx, ds
+  mov ax, cs
+  mov ds, ax
+  call get_buf ; If buffered char exists, take it now.
+  mov bx, si ; We'll need the offset of the packet later.
+  je .nobuf
+  dec cx ; One less char to grab from device
+  stosb ; Store it
+  mov ax, 1
+  jz .done ; If there was only one char to get, don't bother trying
+           ; to get more.
+.nobuf:
+  call read_msg2 ; Get the remaining characters
+.done:
+  call clear_buf ; Buffer should only be filled during non-destructive read.
+  mov ds, dx
 
-  mov [bx + wrreq.count], ax
+  mov [bx + wrreq.count], ax ; Set read-specific return info.
 
   mov di, bx ; Make sure ES:DI points at the right place to set status.
-  push ds
-  pop es
+  mov es, dx
   jmp interrupt.exit
 
 ; Helper Routines
@@ -164,13 +175,15 @@ read:
 ; Return:
 ; AX- Chars read
 ;
-; CX zero, DX, SI, DI trashed
+; CX zero, DS points to CS, SI, DI trashed
+;
+; read_msg2: Assumes DS == CS already.
 read_msg:
-  mov dx, ds
   mov ax, cs
   mov ds, ax
-
+read_msg2:
   mov ax, cx ; Xfer will succeed, so save the count for AX.
+             ; (movsb does not clobber AX.)
   mov si, [msg_ptr] ; Prepare device source buffer.
 
 .next:
@@ -181,8 +194,7 @@ read_msg:
   movsb
   loop .next
 
-  mov [msg_ptr], si ; Restore DS
-  mov ds, ax
+  mov [msg_ptr], si
   ret
 
 ; Returns:
