@@ -1,4 +1,4 @@
-; Approximate DOS Crash Count when developing this: 28 times.
+; Approximate DOS Crash Count when developing this: 30 times.
 
 struc header
   next: resd 1
@@ -84,6 +84,8 @@ strategy:
   mov cs:[packet_ptr+2], es
   retf
 
+; The available source for MS-DOS don't preserve flags in drivers, and no point
+; in preserving SP.
 interrupt:
   push ax
   push cx
@@ -165,8 +167,11 @@ read:
 .nobuf:
   call read_msg2 ; Get the remaining characters
 .done:
-  call clear_buf ; Buffer should only be filled during non-destructive read.
-  mov ds, dx
+  call clear_buf ; Buffer should only be filled during non-destructive read
+  mov ds, dx     ; (more complicated devices, like ones using interrupts, or
+                 ; those that read more than one char at a time from the
+                 ; physical device, may opt to fill the buffer at other times
+                 ; besides ndread. This device does neither for simplicity.
 
   mov [bx + wrreq.count], ax ; Set read-specific return info.
 
@@ -186,7 +191,7 @@ readnd:
   mov cx, 1
   mov di, lookahead_char
   call read_msg2 ; Read one character- this device can't be busy.
-                 ; If it could be busy, we'd check for whether a buffer had
+                 ; If it could be busy, we'd check for whether the device had
                  ; chars in it first, and if not, bail w/ busy code.
   mov byte [got_lookahead], 1
   call get_buf ; Ignore flag value, we know we just got a char.
@@ -200,6 +205,10 @@ readnd:
 ; Per DEVDRIV.TXT, you are allowed to lie to DOS and say a read will return
 ; immediately when it won't. This driver cannot be busy, but might as well
 ; consult our lookahead buffer to test the STATUS call...
+;
+; With that being said, I can find no indication in the MS-DOS 2.0 source code
+; that Input Status is ever used by anything; Non-Destructive read is used
+; instead.
 istat:
   mov ax, cs
   mov ds, ax
@@ -207,6 +216,9 @@ istat:
   je interrupt.exit
   jmp interrupt.busy
 
+; Input Flush does not appear to be used by the file handle API, although it
+; _is_ in fact used by a function (IOFUNC) which operates on a lower level
+; than the file handle APIs. I've not figured out how to test this yet.
 iflush:
   mov ax, cs
   mov ds, ax
